@@ -6,13 +6,13 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
-from openagi.actions.utils import run_action
+from openagi.actions.utils import run_action, async_run_action
 from openagi.exception import OpenAGIException
 from openagi.llms.base import LLMBaseModel
 from openagi.memory.memory import Memory
 from openagi.prompts.worker_task_execution import WorkerAgentTaskExecution
 from openagi.tasks.task import Task
-from openagi.utils.extraction import get_act_classes_from_json, get_last_json
+from openagi.utils.extraction import get_act_classes_from_json, get_last_json, async_get_last_json
 from openagi.utils.helper import get_default_id
 
 
@@ -78,6 +78,11 @@ class Worker(BaseModel):
         output_key_exists = bool(output and output.get(self.output_key))
         return (not output_key_exists, output)
 
+    async def async_should_continue(self, llm_resp: str) -> Union[bool, Optional[Dict]]:
+        output: Dict = await async_get_last_json(llm_resp, llm=self.llm, max_iterations=self.max_iterations)
+        output_key_exists = bool(output and output.get(self.output_key))
+        return (not output_key_exists, output)
+
     def _force_output(
         self, llm_resp: str, all_thoughts_and_obs: List[str]
     ) -> Union[bool, Optional[str]]:
@@ -110,14 +115,14 @@ class Worker(BaseModel):
             + "Based on the previous action and observation, give me the output."
         )
         output = await self.llm.async_run(prompt)
-        cont, final_output = self.should_continue(output)
+        cont, final_output = await self.async_should_continue(output)
         if cont:
             prompt = (
                 "\n".join(all_thoughts_and_obs)
                 + f"Based on the previous action and observation, give me the output. {final_output}"
             )
             output = self.llm.async_run(prompt)
-            cont, final_output = self.should_continue(output)
+            cont, final_output = await self.async_should_continue(output)
         if cont:
             raise OpenAGIException(
                 f"LLM did not produce the expected output after {self.max_iterations} iterations."
@@ -299,7 +304,7 @@ class Worker(BaseModel):
         while iteration < max_iters:
             logging.info(f"---- Iteration {iteration} ----")
             logging.debug("Checking if task should continue...")
-            continue_flag, output = self.should_continue(observations)
+            continue_flag, output = await self.async_should_continue(observations)
 
             logging.debug("Extracting action from output...")
             action = output.get("action") if output else None
@@ -347,7 +352,7 @@ class Worker(BaseModel):
                     params["llm"] = self.llm
                     try:
                         logging.debug(f"Running action: {act_cls.__name__}...")
-                        res = run_action(action_cls=act_cls, **params)
+                        res = await async_run_action(action_cls=act_cls, **params)
                         logging.info(f"Action '{act_cls.__name__}' completed. Result: {res}")
                     except Exception as e:
                         logging.error(f"Error running action: {e}")

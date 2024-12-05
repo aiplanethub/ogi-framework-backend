@@ -14,3 +14,6 @@ class ConsolePrint(BaseAction):
     def execute(self):
         pprint(self.content)
         return self.content
+    
+    async def async_execute(self):
+        return self.execute()

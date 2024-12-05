@@ -70,3 +70,6 @@ class PubMedSearch(ConfigurableAction):
 
 		except Exception as e:
 			return f"Error searching PubMed: {str(e)}"
+
+	async def async_execute(self):
+        return self.execute()

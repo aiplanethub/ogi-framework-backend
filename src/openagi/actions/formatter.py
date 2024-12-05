@@ -18,3 +18,8 @@ class FormatterAction(BaseAction):
         return self.llm.run(
             f"Format and return the below response in {self.format_type} format without removing any content. You can rephrase if required.\n{self.content}"
         )
+
+    async def async_execute(self):
+        return await self.llm.async_run(
+            f"Format and return the below response in {self.format_type} format without removing any content. You can rephrase if required.\n{self.content}"
+        )

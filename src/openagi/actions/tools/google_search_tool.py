@@ -36,3 +36,5 @@ class GoogleSearchTool(ConfigurableAction):
         
         return context
         
+    async def async_execute(self):
+        return self.execute()

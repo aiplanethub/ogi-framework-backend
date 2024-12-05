@@ -39,6 +39,9 @@ class CreateFileAction(BaseAction):
         output_file.write_text(data=self.file_content, **write_kwargs)
         return self.file_content
 
+    async def async_execute(self):
+        return self.execute()
+
 
 class WriteFileAction(BaseAction):
     """
@@ -59,6 +62,9 @@ class WriteFileAction(BaseAction):
             f.write(self.file_content)
         return self.file_content
 
+    async def async_execute(self):
+        return self.execute()
+
 
 class ReadFileAction(BaseAction):
     """
@@ -72,3 +78,6 @@ class ReadFileAction(BaseAction):
         logging.info(f"Reading file - {output_file.absolute()}")
         with open(output_file.absolute(), "r") as f:
             return f.read()
+
+    async def async_execute(self):
+        return self.execute()

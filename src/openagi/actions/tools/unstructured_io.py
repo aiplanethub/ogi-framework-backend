@@ -32,3 +32,6 @@ class UnstructuredPdfLoaderAction(ConfigurableAction):
             f.write(str(dict_elements))
 
         return str(dict_elements)
+
+    async def async_execute(self):
+        return self.execute()

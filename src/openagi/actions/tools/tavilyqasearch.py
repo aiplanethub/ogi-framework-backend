@@ -47,3 +47,6 @@ class TavilyWebSearchQA(ConfigurableAction):
         client = TavilyClient(api_key=api_key)
         response = client.qna_search(query=self.query)
         return response
+
+    async def async_execute(self):
+        return self.execute()

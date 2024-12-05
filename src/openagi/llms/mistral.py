@@ -63,7 +63,7 @@ class MistralModel(LLMBaseModel):
         logging.info(f"Running LLM - {self.__class__.__name__}")
         self.load_llm()
         message = self.process_message(input_data=input_text)
-        resp = await self.llm.ainvoke(message)
+        resp = await self.llm.ainvoke([message])
         return resp.content
 
     @staticmethod

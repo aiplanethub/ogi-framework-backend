@@ -38,3 +38,6 @@ class YouTubeSearchTool(ConfigurableAction):
                 description = info_dict.get('description', None)
                 context += f"Description: {description} \n\n"
         return context
+
+    async def async_execute(self):
+        return self.execute()

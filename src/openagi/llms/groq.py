@@ -58,7 +58,7 @@ class GroqModel(LLMBaseModel):
         """
         self.load_llm()
         message = self.process_message(input_data=input_data)
-        resp = await self.llm.ainvoke(message)
+        resp = await self.llm.ainvoke([message])
         return resp.content
     
     @staticmethod

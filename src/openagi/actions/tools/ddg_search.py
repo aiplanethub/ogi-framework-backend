@@ -40,3 +40,6 @@ class DuckDuckGoSearch(ConfigurableAction):
             max_results=self.max_results,
         )
         return json.dumps(result)
+
+    async def async_execute(self):
+        return self.execute()

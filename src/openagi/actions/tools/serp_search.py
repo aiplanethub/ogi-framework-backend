@@ -86,3 +86,6 @@ class GoogleSerpAPISearch(ConfigurableAction):
             meta_data += f"Reference URL: {info.get('link', '')}\n\n"
             
         return meta_data.strip()
+
+    async def async_execute(self):
+        return self.execute()

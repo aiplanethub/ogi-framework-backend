@@ -8,7 +8,7 @@ from openagi.actions.base import BaseAction
 from openagi.actions.compressor import SummarizerAction
 from openagi.actions.formatter import FormatterAction
 from openagi.actions.obs_rag import MemoryRagAction
-from openagi.actions.utils import run_action
+from openagi.actions.utils import run_action, async_run_action
 from openagi.exception import OpenAGIException
 from openagi.llms.azure import LLMBaseModel
 from openagi.memory.memory import Memory
@@ -207,7 +207,7 @@ class Admin(BaseModel):
         logging.info("Retrieving completed task contexts...")
         t_list = task_lists.completed_tasks.queue
         for indx, task in enumerate(t_list):
-            memory = run_action(
+            memory =  await async_run_action(
                 action_cls=MemoryRagAction,
                 task=task,
                 llm=self.llm,
@@ -221,7 +221,7 @@ class Admin(BaseModel):
                     "memory": self.memory,
                     "instructions": "Include summary of all the thoughts, but include all the relevant points from the observations without missing any.",
                 }
-                memory = run_action(action_cls=SummarizerAction, **params)
+                memory = await async_run_action(action_cls=SummarizerAction, **params)
                 if not memory:
                     raise Exception("No memory returned after summarization.")
             task_summaries.append(f"\n{indx+1}. {task.name} - {task.description}\n{memory}")
@@ -270,7 +270,7 @@ class Admin(BaseModel):
         while not task_lists.all_tasks_completed:
             cur_task = task_lists.get_next_unprocessed_task()
             worker = self._get_worker_by_id(cur_task.worker_id)
-            res, task = worker.execute_task(
+            res, task = await worker.async_execute_task(
                 cur_task,
                 context= await self.async_get_previous_task_contexts(task_lists=task_lists),
             )
@@ -653,7 +653,7 @@ class Admin(BaseModel):
                     logging.info(f"Task completed. Output: {output}")
                     break
 
-                resp_json = get_last_json(observations)
+                resp_json = async_get_last_json(observations)
 
                 output = resp_json.get(self.output_key) if resp_json else None
                 if output:
@@ -680,7 +680,7 @@ class Admin(BaseModel):
                         params["memory"] = self.memory
                         try:
                             logging.debug(f"Running action: {act_cls.__name__}...")
-                            res = run_action(action_cls=act_cls, **params)
+                            res = await async_run_action(action_cls=act_cls, **params)
                             logging.info(f"Action '{act_cls.__name__}' completed. Result: {res}")
                         except Exception as e:
                             logging.error(f"Error running action: {e}")

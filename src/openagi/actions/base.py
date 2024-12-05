@@ -27,6 +27,10 @@ class BaseAction(BaseModel):
         """Executes the action"""
         raise NotImplementedError("Subclasses must implement this method.")
 
+    async def async_execute(self):
+        """Executes the async action"""
+        raise NotImplementedError("Subclasses must implement this method.")
+
     @classmethod
     def cls_doc(cls):
         default_exclude_doc_fields = ["llm", "memory", "session_id", "name", "description"]

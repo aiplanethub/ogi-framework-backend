@@ -53,3 +53,6 @@ class SearchApiSearch(ConfigurableAction):
             meta_data += f"CONTEXT: {organic_result['title']} \ {organic_result['snippet']}"
             meta_data += f"Reference URL: {organic_result['link']}\n"
         return meta_data
+
+    async def async_execute(self):
+        return self.execute()

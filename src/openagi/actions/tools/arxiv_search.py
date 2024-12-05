@@ -33,6 +33,9 @@ class ArxivSearch(ConfigurableAction):
             meta_data += f"entry_id : {result.entry_id}\n\n "
         return meta_data.strip()
 
+    async def async_execute(self):
+        return self.execute()
+
 
 
 
