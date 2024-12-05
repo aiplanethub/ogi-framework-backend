@@ -12,3 +12,6 @@ class HumanCLIInput(BaseAction):
     def execute(self, prompt=ques_prompt):
         response = input(f"Agent: {prompt}\nYou: ")
         return response
+    
+    async def async_execute(self, prompt=ques_prompt):
+        return self.execute(prompt=prompt)

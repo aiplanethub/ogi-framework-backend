@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from typing import Any
-
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 
@@ -31,9 +31,26 @@ class LLMBaseModel(BaseModel):
     def load(self):
         """Initializes the LLM instance with configurations."""
         pass
+    
+    @abstractmethod
+    def async_load(self):
+        """Initializes the LLM instance with configurations."""
+        pass
 
     @abstractmethod
     def run(self, input_data: Any):
+        """Interacts with the LLM service using the provided input.
+
+        Args:
+            input_data: The input to process by the LLM. The format can vary.
+
+        Returns:
+            The result from processing the input data through the LLM.
+        """
+        pass
+
+    @abstractmethod
+    async def async_run(self, input_data: Any):
         """Interacts with the LLM service using the provided input.
 
         Args:
@@ -49,3 +66,14 @@ class LLMBaseModel(BaseModel):
     def load_from_env_config():
         """Loads configuration values from a YAML file."""
         pass
+    
+    def load_llm(self, load_type='sync'):
+        load_function = self.load if load_type == 'sync' else self.async_load
+        if not self.llm:
+            load_function()
+        if not self.llm:
+            raise ValueError("`llm` attribute not set.")
+    
+    def process_message(self, input_data: Any):
+        message = HumanMessage(content=input_data)
+        return message

@@ -1,6 +1,5 @@
 import logging
 from typing import Any
-from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 
 from openagi.llms.base import LLMBaseModel, LLMConfigModel
@@ -29,6 +28,14 @@ class OpenAIModel(LLMBaseModel):
             model_name=self.config.model_name,
         )
         return self.llm
+    
+    async def async_load(self):
+        """Initializes the OpenAI instance asynchronously."""
+        self.llm = ChatOpenAI(
+            openai_api_key=self.config.openai_api_key,
+            model_name=self.config.model_name,
+        )
+        return self.llm
 
     def run(self, input_text: str):
         """Runs the OpenAI model with the provided input text.
@@ -40,12 +47,24 @@ class OpenAIModel(LLMBaseModel):
             The response from OpenAI service.
         """
         logging.info(f"Running LLM - {self.__class__.__name__}")
-        if not self.llm:
-            self.load()
-        if not self.llm:
-            raise ValueError("`llm` attribute not set.")
-        message = HumanMessage(content=input_text)
+        self.load_llm()
+        message = self.process_message(input_data=input_text)
         resp = self.llm([message])
+        return resp.content
+
+    async def async_run(self, input_text: str):
+        """Runs the OpenAI model with the provided input text.
+
+        Args:
+            input_text: The input text to process.
+
+        Returns:
+            The response from OpenAI service.
+        """
+        logging.info(f"Running LLM - {self.__class__.__name__}")
+        self.load_llm()
+        message = self.process_message(input_data=input_text)
+        resp = await self.llm.ainvoke([message])
         return resp.content
 
     @staticmethod

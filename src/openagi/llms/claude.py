@@ -42,13 +42,23 @@ class ChatAnthropicModel(LLMBaseModel):
             The response from Anthropic - Claude LLM.
         """
 
-        if not self.llm:
-            self.load()
-        if not self.llm:
-            raise ValueError("`llm` attribute not set.")
-        
-        message = HumanMessage(content=input_data)
+        self.load_llm()
+        message = self.process_message(input_data=input_data)
         response = self.llm([message])
+        return response.content
+    
+    async def async_run(self, input_data: str):
+        """
+        Runs the Chat Anthropic model with the provided input text.
+        Args:
+            input_data: The input text to process.
+        Returns:
+            The response from Anthropic - Claude LLM.
+        """
+
+        self.load_llm()
+        message = self.process_message(input_data=input_data)
+        response = await self.llm.ainvoke([message])
         return response.content
 
     @staticmethod

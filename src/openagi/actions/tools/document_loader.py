@@ -24,6 +24,9 @@ class TextLoaderTool(ConfigurableAction):
         source = documents[0].metadata["source"]
         return f"{source} {page_content}"
 
+    async def async_execute(self):
+        return self.execute()
+
 class PDFLoaderTool(ConfigurableAction):
     """Load content from a PDF file.
     
@@ -42,6 +45,9 @@ class PDFLoaderTool(ConfigurableAction):
         page_content = documents[0].page_content
         source = documents[0].metadata["source"]
         return f"{source} {page_content}"
+
+    async def async_execute(self):
+        return self.execute()
 
 class CSVLoaderTool(ConfigurableAction):
     """Load content from a CSV file.
@@ -62,3 +68,6 @@ class CSVLoaderTool(ConfigurableAction):
             content_parts.append(f"row_no {row_number}: {row_content}")
             
         return "".join(content_parts)
+
+    async def async_execute(self):
+        return self.execute()

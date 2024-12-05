@@ -46,12 +46,24 @@ class MistralModel(LLMBaseModel):
             The response from Mistral service.
         """
         logging.info(f"Running LLM - {self.__class__.__name__}")
-        if not self.llm:
-            self.load()
-        if not self.llm:
-            raise ValueError("`llm` attribute not set.")
-        message = HumanMessage(content=input_text)
+        self.load_llm()
+        message = self.process_message(input_data=input_text)
         resp = self.llm([message])
+        return resp.content
+
+    async def async_run(self, input_text: str):
+        """Runs the Mistral model with the provided input text.
+
+        Args:
+            input_text: The input text to process.
+
+        Returns:
+            The response from Mistral service.
+        """
+        logging.info(f"Running LLM - {self.__class__.__name__}")
+        self.load_llm()
+        message = self.process_message(input_data=input_text)
+        resp = await self.llm.ainvoke([message])
         return resp.content
 
     @staticmethod

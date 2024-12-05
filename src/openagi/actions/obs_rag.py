@@ -23,3 +23,6 @@ class MemoryRagAction(BaseAction):
         resp = self.memory.search(query=self.query, n_results=self.max_results or 10)
         logging.debug(f"Retreived MEMORY DATA  -  {resp}")
         return resp
+
+    async def async_execute(self):
+        return self.execute()

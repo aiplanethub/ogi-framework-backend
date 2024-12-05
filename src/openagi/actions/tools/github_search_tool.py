@@ -79,3 +79,6 @@ class GitHubFileLoadAction(BaseAction):
             response.append(f"{doc.page_content}\nMetadata{doc.metadata}")
 
         return "\n\n".join(response)
+
+    async def async_execute(self):
+        return self.execute()

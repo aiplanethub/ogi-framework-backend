@@ -61,3 +61,6 @@ class ExaSearch(ConfigurableAction):
             content.replace("<|endoftext|>", "")
                   .replace("NaN", "")
         )
+
+    async def async_execute(self):
+        return self.execute()

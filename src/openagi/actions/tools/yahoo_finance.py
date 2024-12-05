@@ -73,3 +73,6 @@ class YahooFinanceTool(ConfigurableAction):
 				
 		except Exception as e:
 			return f"Error fetching data for {self.symbol}: {str(e)}"
+
+	async def async_execute(self):
+		return self.execute()

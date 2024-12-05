@@ -8,7 +8,7 @@ from openagi.actions.base import BaseAction
 from openagi.actions.compressor import SummarizerAction
 from openagi.actions.formatter import FormatterAction
 from openagi.actions.obs_rag import MemoryRagAction
-from openagi.actions.utils import run_action
+from openagi.actions.utils import run_action, async_run_action
 from openagi.exception import OpenAGIException
 from openagi.llms.azure import LLMBaseModel
 from openagi.memory.memory import Memory
@@ -19,6 +19,8 @@ from openagi.utils.extraction import (
     find_last_r_failure_content,
     get_act_classes_from_json,
     get_last_json,
+    async_force_json_output,
+    async_get_last_json
 )
 from openagi.utils.helper import get_default_llm
 from openagi.utils.tool_list import get_tool_list
@@ -137,6 +139,33 @@ class Admin(BaseModel):
             supported_actions=actions_dict,
             supported_workers=workers_dict,
         )
+    
+    async def async_run_planner(self, query: str, description: str, long_term_context: str):
+        if self.planner:
+            if not getattr(self.planner, "llm", False):
+                setattr(self.planner, "llm", self.llm)
+
+            setattr(self.planner, "workers", self.workers)
+
+        logging.info("Thinking...")
+        actions_dict: List[BaseAction] = []
+
+        for act in self.actions:
+            actions_dict.append(act.cls_doc())
+
+        workers_dict = []
+        for worker in self.workers:
+            workers_dict.append(worker.worker_doc())
+            for action in worker.actions:
+                actions_dict.append(action.cls_doc())
+
+        return await self.planner.async_plan(
+            query=query,
+            description=description,
+            long_term_context=long_term_context,
+            supported_actions=actions_dict,
+            supported_workers=workers_dict,
+        )
 
     def _generate_tasks_list(self, planned_tasks):
         task_lists = TaskLists()
@@ -164,6 +193,35 @@ class Admin(BaseModel):
                     "instructions": "Include summary of all the thoughts, but include all the relevant points from the observations without missing any.",
                 }
                 memory = run_action(action_cls=SummarizerAction, **params)
+                if not memory:
+                    raise Exception("No memory returned after summarization.")
+            task_summaries.append(f"\n{indx+1}. {task.name} - {task.description}\n{memory}")
+        else:
+            logging.warning("No Tasks to summarize.")
+        if task_summaries:
+            return "\n".join(task_summaries).strip()
+        return "None"
+    
+    async def async_get_previous_task_contexts(self, task_lists: TaskLists):
+        task_summaries = []
+        logging.info("Retrieving completed task contexts...")
+        t_list = task_lists.completed_tasks.queue
+        for indx, task in enumerate(t_list):
+            memory =  await async_run_action(
+                action_cls=MemoryRagAction,
+                task=task,
+                llm=self.llm,
+                memory=self.memory,
+                query=task.id,
+            )
+            if memory and self.summarize_task_context:
+                params = {
+                    "past_messages": memory,
+                    "llm": self.llm,
+                    "memory": self.memory,
+                    "instructions": "Include summary of all the thoughts, but include all the relevant points from the observations without missing any.",
+                }
+                memory = await async_run_action(action_cls=SummarizerAction, **params)
                 if not memory:
                     raise Exception("No memory returned after summarization.")
             task_summaries.append(f"\n{indx+1}. {task.name} - {task.description}\n{memory}")
@@ -206,12 +264,44 @@ class Admin(BaseModel):
         logging.debug(f"Execution Completed for Session ID - {self.memory.session_id}")
         return res
 
+    async def async_worker_task_execution(self, query: str, description: str, task_lists: TaskLists):
+        res = None
+
+        while not task_lists.all_tasks_completed:
+            cur_task = task_lists.get_next_unprocessed_task()
+            worker = self._get_worker_by_id(cur_task.worker_id)
+            res, task = await worker.async_execute_task(
+                cur_task,
+                context= await self.async_get_previous_task_contexts(task_lists=task_lists),
+            )
+            self.memory.update_task(task)
+            task_lists.add_completed_tasks(task)
+
+        logging.info("Finished Execution...")
+
+        if self.output_format == OutputFormat.markdown and res:
+            logging.info("Output Formatting...")
+            output_formatter = FormatterAction(
+                content=res,
+                format_type=OutputFormat.markdown,
+                llm=self.llm,
+                memory=self.memory,
+            )
+            res = output_formatter.execute()
+        logging.debug(f"Execution Completed for Session ID - {self.memory.session_id}")
+        return res
+
     def _provoke_thought_obs(self, observation):
         thoughts = dedent(f"""Observation: {observation}""".strip())
         return thoughts
 
     def _should_continue(self, llm_resp: str) -> Tuple[bool, Optional[Dict]]:
         output: Dict = get_last_json(llm_resp, llm=self.llm, max_iterations=self.max_iterations)
+        output_key_exists = bool(output and output.get(self.output_key))
+        return (not output_key_exists, output)
+
+    async def _async_should_continue(self, llm_resp: str) -> Tuple[bool, Optional[Dict]]:
+        output: Dict = await async_get_last_json(llm_resp, llm=self.llm, max_iterations=self.max_iterations)
         output_key_exists = bool(output and output.get(self.output_key))
         return (not output_key_exists, output)
 
@@ -232,6 +322,29 @@ class Admin(BaseModel):
             )
             output = self.llm.run(prompt)
             cont, final_output = self._should_continue(output)
+        if cont:
+            raise OpenAGIException(
+                f"LLM did not produce the expected output after {self.max_iterations} iterations."
+            )
+        return (cont, final_output)
+
+    async def _async_force_output(
+        self, llm_resp: str, all_thoughts_and_obs: List[str]
+    ) -> Tuple[bool, Optional[str]]:
+        """Force the output once the max iterations are reached."""
+        prompt = (
+            "\n".join(all_thoughts_and_obs)
+            + "Based on the previous action and observation, give me the output."
+        )
+        output = await self.llm.async_run(prompt)
+        cont, final_output = await self._async_should_continue(output)
+        if cont:
+            prompt = (
+                "\n".join(all_thoughts_and_obs)
+                + f"Based on the previous action and observation, give me the output. {final_output}"
+            )
+            output = await self.llm.async_run(prompt)
+            cont, final_output = await self._async_should_continue(output)
         if cont:
             raise OpenAGIException(
                 f"LLM did not produce the expected output after {self.max_iterations} iterations."
@@ -293,10 +406,64 @@ class Admin(BaseModel):
                 task_lists=task_lists,
             )
 
+    async def async_auto_workers_assignment(self, query: str, description: str, task_lists: TaskLists):
+        """
+        Autonomously generates the Workers with the
+
+        Args:
+            query (str): The query to be processed.
+            description (str): A description of the task.
+            task_lists (TaskLists): The task lists to be processed.
+
+        Returns:
+            str: JSON of the list of Workers that needs to be executed
+        """
+
+        workers = []
+        tools_list = get_tool_list()
+        
+        for action in self.actions:
+            tools_list.append(action)
+
+        worker_dict = {}
+        main_task_list = TaskLists()
+        while not task_lists.all_tasks_completed:
+            cur_task = task_lists.get_next_unprocessed_task()
+            print(cur_task)
+            logging.info(f"**** Executing Task - {cur_task.name} [{cur_task.id}] ****")
+
+            worker_config = cur_task.worker_config
+
+            worker_instance = None
+            if worker_config["role"] not in worker_dict:
+                worker_instance = Worker(
+                    role=worker_config["role"],
+                    instructions=worker_config["instructions"],
+                    llm=self.llm,
+                    actions=self.get_supported_actions_for_worker(
+                        worker_config["supported_actions"],tools_list
+                    ),
+                )
+                worker_dict[worker_config["role"]] = worker_instance
+            else:
+                worker_instance = worker_dict[worker_config["role"]]
+            workers.append(worker_instance)
+            cur_task.worker_id = worker_instance.id
+            main_task_list.add_task(cur_task)
+
+        task_lists = main_task_list
+        self.assign_workers(workers=workers)
+
+        if self.workers:
+            return await self.async_worker_task_execution(
+                query=query,
+                description=description,
+                task_lists=task_lists,
+            )
+
     def single_agent_execution(self, query: str, description: str, task_lists: TaskLists):
         """
         Executes a single agent's tasks for the given query and description, updating the task lists and memory as necessary.
-
         Args:
             query (str): The query to be processed.
             description (str): A description of the task.
@@ -430,6 +597,143 @@ class Admin(BaseModel):
         logging.debug(f"Execution Completed for Session ID - {self.memory.session_id}")
         return output
 
+    async def async_single_agent_execution(self, query: str, description: str, task_lists: TaskLists):
+        """
+        Executes a single agent's tasks for the given query and description, updating the task lists and memory as necessary.
+
+        Args:
+            query (str): The query to be processed.
+            description (str): A description of the task.
+            task_lists (TaskLists): The task lists to be processed.
+
+        Returns:
+            str: The final result of the task execution.
+        """
+        all_thoughts_and_obs = []
+        output = None
+        previous_task_context = None
+
+        while not task_lists.all_tasks_completed:
+            iteration = 1
+            max_iterations = self.max_iterations
+
+            cur_task = task_lists.get_next_unprocessed_task()
+            logging.info(f"**** Executing Task - {cur_task.name} [{cur_task.id}] ****")
+
+            task_to_execute = f"{cur_task.name}. {cur_task.description}"
+            agent_description = "Task executor"
+
+            logging.debug("Provoking initial thought observation...")
+            initial_thought_provokes = self._provoke_thought_obs(None)
+
+            te_vars = dict(
+                task_to_execute=task_to_execute,
+                worker_description=agent_description,
+                supported_actions=[action.cls_doc() for action in self.actions],
+                thought_provokes=initial_thought_provokes,
+                output_key=self.output_key,
+                context=previous_task_context,
+                max_iterations=max_iterations,
+            )
+
+            logging.debug("Generating base prompt...")
+            base_prompt = WorkerAgentTaskExecution().from_template(te_vars)
+            prompt = f"{base_prompt}\nThought:\nIteration: {iteration}\nActions:\n"
+
+            logging.debug("Running LLM with prompt...")
+            observations = await self.llm.async_run(prompt)
+            logging.info(f"LLM execution completed. Observations: {observations}")
+            all_thoughts_and_obs.append(prompt)
+
+            while iteration < max_iterations:
+                logging.info(f"---- Iteration {iteration} ----")
+                continue_flag, output = await self._async_should_continue(observations)
+
+                if not continue_flag:
+                    logging.info(f"Task completed. Output: {output}")
+                    break
+
+                resp_json = async_get_last_json(observations)
+
+                output = resp_json.get(self.output_key) if resp_json else None
+                if output:
+                    cur_task.result = output
+                    cur_task.actions = te_vars["supported_actions"]
+                    self.memory.update_task(cur_task)
+
+                action_json = resp_json.get("action") if resp_json else None
+
+                if action_json and not isinstance(action_json, list):
+                    action_json = [action_json]
+
+                if not action_json:
+                    logging.warning(f"No action found in the output: {output}")
+                    observations = f"Action: {action_json}\n{observations} Unable to extract action. Verify the output and try again."
+                    all_thoughts_and_obs.append(observations)
+                    iteration += 1
+                elif action_json:
+                    actions = get_act_classes_from_json(action_json)
+
+                    for act_cls, params in actions:
+                        params["previous_action"] = None  # Modify as needed
+                        params["llm"] = self.llm
+                        params["memory"] = self.memory
+                        try:
+                            logging.debug(f"Running action: {act_cls.__name__}...")
+                            res = await async_run_action(action_cls=act_cls, **params)
+                            logging.info(f"Action '{act_cls.__name__}' completed. Result: {res}")
+                        except Exception as e:
+                            logging.error(f"Error running action: {e}")
+                            observations = f"Action: {action_json}\n{observations}. {e} Try to fix the error and try again. Ignore if already tried more than twice"
+                            all_thoughts_and_obs.append(observations)
+                            iteration += 1
+                            continue
+
+                        observation_prompt = f"Observation: {res}\n"
+                        all_thoughts_and_obs.append(observation_prompt)
+                        observations = res
+
+                    logging.debug("Provoking thought observation...")
+                    thought_prompt = self._provoke_thought_obs(observations)
+                    all_thoughts_and_obs.append(f"\n{thought_prompt}\nActions:\n")
+
+                    prompt = f"{base_prompt}\n" + "\n".join(all_thoughts_and_obs)
+                    logging.debug(f"\nSTART:{'*' * 20}\n{prompt}\n{'*' * 20}:END")
+                    logging.debug("Running LLM with updated prompt...")
+                    observations = await self.llm.async_run(prompt)
+                    iteration += 1
+            else:
+                if iteration == max_iterations:
+                    logging.info("---- Forcing Output ----")
+                    cont, final_output = await self._async_force_output(observations, all_thoughts_and_obs)
+                    if cont:
+                        raise OpenAGIException(
+                            f"LLM did not produce the expected output after {iteration} iterations for task {cur_task.name}"
+                        )
+                    output = final_output
+                    cur_task.result = output
+                    cur_task.actions = te_vars["supported_actions"]
+                    self.memory.update_task(cur_task)
+                    task_lists.add_completed_tasks(cur_task)
+
+            previous_task_context = self.async_get_previous_task_contexts(task_lists)
+            task_lists.add_completed_tasks(cur_task)
+
+        logging.info("Finished Execution...")
+
+        if self.output_format == OutputFormat.markdown:
+            logging.info("Output Formatting...")
+            output_formatter = FormatterAction(
+                content=output,
+                format_type=OutputFormat.markdown,
+                llm=self.llm,
+                memory=self.memory,
+            )
+            output = output_formatter.execute()
+
+        logging.debug(f"Execution Completed for Session ID - {self.memory.session_id}")
+        return output
+
 
     def run(self, query: str, description: str,planned_tasks: Optional[List[Dict]] = None):
         logging.info("Running Admin Agent...")
@@ -510,6 +814,85 @@ class Admin(BaseModel):
                 self.save_ltm("add", session)
         return result
 
+    async def async_run(self, query: str, description: str,planned_tasks: Optional[List[Dict]] = None):
+        logging.info("Running Admin Agent...")
+        logging.info(f"SessionID - {self.memory.session_id}")
+
+        if self.memory.long_term and planned_tasks:
+            logging.warning("Long Term Memory is not applicable for user given plan.")
+
+        ltm = ["None"]
+        bad_feedback = False
+        bad_session = None
+        if self.memory.long_term and not planned_tasks:
+            logging.info("Retrieving similar queries from long term memory...")
+            similar_sessions = self.memory.get_ltm(query)
+            ltm = []
+            for memory in similar_sessions:
+                metadata = memory["metadata"]
+                if memory["similarity_score"] >= self.memory.ltm_threshold:
+                    if metadata["ans_feedback"]=='' and metadata["plan_feedback"]=='':
+                        logging.info(f"Found a very similar query (similarity = {memory['similarity_score']} in long term memory without negative feedback, returning answer directly")
+                        result = memory["document"]
+                        # ask for feedback here and UPDATE the response
+                        # write for case when threshold is crossed but negative feedback
+                        session = SessionDict.from_dict(metadata)
+                        self.save_ltm("update", session)
+                        return result
+                    else:
+                        ltm.append(LTMFormatPrompt().base_prompt.format(**metadata))
+                        bad_feedback = True
+                        bad_session = SessionDict.from_dict(metadata)
+                        break
+                # ltm.append(LTMFormatPrompt().base_prompt.format(**metadata))
+                # the above is commented because i think it is better to have a threshold on what gets retrieved
+                # instead of relying on top k. This way we only retrieve one session though, but it should be a
+                # good session.
+
+        old_context = "\n\n".join(ltm)
+        if not planned_tasks:
+            planned_tasks = await self.async_run_planner(query=query, description=description, long_term_context=old_context)
+
+
+        logging.info("Tasks Planned...")
+        logging.debug(f"{planned_tasks=}")
+
+        task_lists: TaskLists = self._generate_tasks_list(planned_tasks=planned_tasks)
+
+        self.memory.save_planned_tasks(tasks=list(task_lists.tasks.queue))
+
+        if self.planner.autonomous:
+            result = await self.async_auto_workers_assignment(
+                query=query, description=description, task_lists=task_lists
+            )
+        else:
+            if self.workers:
+                result = await self.async_worker_task_execution(
+                    query=query,
+                    description=description,
+                    task_lists=task_lists,
+                )
+            else:
+                result = await self.async_single_agent_execution(
+                    query=query, description=description, task_lists=task_lists
+                )
+        # Human feedback part
+        if self.memory.long_term:
+            if bad_feedback:
+                bad_session.plan = str(planned_tasks)
+                bad_session.answer =  result
+                self.save_ltm("update", bad_session)
+            else:
+                session = SessionDict(
+                    query=query,
+                    description=description,
+                    plan=str(planned_tasks),
+                    session_id=self.memory.session_id,
+                    answer=result
+                )
+                self.save_ltm("add", session)
+        return result
+    
     def _can_task_execute(self, llm_resp: str) -> Union[bool, Optional[str]]:
         content: str = find_last_r_failure_content(text=llm_resp)
         if content:

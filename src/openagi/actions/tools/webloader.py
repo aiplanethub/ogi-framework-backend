@@ -67,3 +67,6 @@ class WebBaseContextTool(ConfigurableAction):
 			page_content = self._get_summary(page_content)
 		context = metadata + page_content
 		return context
+
+	async def async_execute(self):
+		return self.execute()

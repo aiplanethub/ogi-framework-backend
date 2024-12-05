@@ -15,3 +15,7 @@ class SummarizerAction(BaseAction):
     def execute(self):
         summarizer: str = SummarizerPrompt.from_template({"past_messages": self.past_messages})
         return self.llm.run(summarizer)
+    
+    async def async_execute(self):
+        summarizer: str = SummarizerPrompt.from_template({"past_messages": self.past_messages})
+        return await self.llm.async_run(summarizer)
