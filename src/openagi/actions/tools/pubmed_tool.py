@@ -72,4 +72,4 @@ class PubMedSearch(ConfigurableAction):
 			return f"Error searching PubMed: {str(e)}"
 
 	async def async_execute(self):
-        return self.execute()
+		return self.execute()
