@@ -40,12 +40,23 @@ class OllamaModel(LLMBaseModel):
         Returns:
             The response from Ollama LLM service.
         """
-        if not self.llm:
-            self.load()
-        if not self.llm:
-            raise ValueError("`llm` attribute not set.")
-        message = HumanMessage(content=input_data)
+        self.load_llm()
+        message = self.process_message(input_data=input_data)
         resp = self.llm([message])
+        return resp.content
+
+    async def async_run(self, input_data: str):
+        """Runs the Ollama model with the provided input text.
+
+        Args:
+            input_data: The input text to process.
+
+        Returns:
+            The response from Ollama LLM service.
+        """
+        self.load_llm()
+        message = self.process_message(input_data=input_data)
+        resp = await self.llm.ainvoke(message)
         return resp.content
 
     @staticmethod

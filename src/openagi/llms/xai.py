@@ -1,6 +1,6 @@
 import logging
 from typing import Any
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from openai._exceptions import AuthenticationError
 
 from openagi.exception import OpenAGIException
@@ -33,6 +33,13 @@ class XAIModel(LLMBaseModel):
             base_url = self.config.base_url
         )
         return self.llm
+    
+    def async_load(self):
+        self.llm=AsyncOpenAI(
+            api_key = self.config.xai_api_key,
+            base_url = self.config.base_url
+        )
+        return self.llm
 
     def run(self, prompt : Any):
         """Runs the XAI model with the provided input text.
@@ -50,6 +57,35 @@ class XAIModel(LLMBaseModel):
             raise ValueError("`llm` attribute not set.")
         try:
             chat_completion = self.llm.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"{self.system_prompt}",
+                },
+                {
+                    "role": "user",
+                    "content": f"{prompt}",
+                },
+                       ],
+            model=self.config.model_name
+            )
+        except AuthenticationError:
+            raise OpenAGIException("Authentication failed. Please check your XAI_API_KEY.")
+        return chat_completion.choices[0].message.content
+
+    async def async_run(self, prompt : Any):
+        """Runs the XAI model with the provided input text.
+
+        Args:
+            input_text: The input text to process.
+
+        Returns:
+            The response from XAI service.
+        """
+        logging.info(f"Running LLM - {self.__class__.__name__}")
+        self.load_llm(load_type='async')
+        try:
+            chat_completion = await self.llm.chat.completions.create(
             messages=[
                 {
                     "role": "system",

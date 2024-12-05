@@ -14,7 +14,7 @@ from openagi.prompts.base import BasePrompt
 from openagi.prompts.constants import CLARIFIYING_VARS
 from openagi.prompts.task_clarification import TaskClarifier
 from openagi.prompts.task_creator import AutoTaskCreator,SingleAgentTaskCreator, MultiAgentTaskCreator
-from openagi.utils.extraction import get_last_json
+from openagi.utils.extraction import get_last_json, async_force_json_output, async_get_last_json
 from openagi.worker import Worker
 
 
@@ -76,6 +76,18 @@ class TaskPlanner(BasePlanner):
         """
         return get_last_json(llm_response)
 
+    async def _async_extract_task_from_response(self, llm_response: str) -> Union[str, None]:
+        """
+        Extracts the last JSON object from the given LLM response string.
+
+        Args:
+            llm_response (str): The LLM response string to extract the JSON from.
+
+        Returns:
+            Union[str, None]: The last JSON object extracted from the response, or None if no JSON was found.
+        """
+        return await async_get_last_json(llm_response)
+
     def human_clarification(self, planner_vars) -> Dict:
         """
         Handles the human clarification process during task planning.
@@ -108,6 +120,56 @@ class TaskPlanner(BasePlanner):
             
             response = self.llm.run(clarifier)
             parsed_response = get_last_json(response, llm=self.llm)
+            question = parsed_response.get("question", "").strip()
+            
+            if not question:
+                return planner_vars
+
+            # set the ques_prompt to question in input_action
+            # self.input_action.ques_prompt = question
+            human_input = self.input_action.execute(prompt=question)
+            planner_vars["objective"] += f" {human_input}"
+            
+            # Update chat history
+            chat_history.append(f"Q: {question}")
+            chat_history.append(f"A: {human_input}")
+            
+            # Check for unwillingness to continue
+            if any(phrase in human_input.lower() for phrase in ["don't know", "no more questions", "that's all", "stop asking"]):
+                return planner_vars
+
+    async def async_human_clarification(self, planner_vars) -> Dict:
+        """
+        Handles the human clarification process during task planning.
+
+        This method is responsible for interacting with the human user to clarify any
+        ambiguities or missing information in the task planning process. It uses a
+        TaskClarifier prompt to generate a question for the human, and then waits for
+        the human's response to update the planner variables accordingly.
+
+        The method will retry the clarification process up to `self.retry_threshold`
+        times before giving up and returning the current planner variables.
+
+        Args:
+            planner_vars (Dict): The current planner variables, which may be updated
+                based on the human's response.
+
+        Returns:
+            Dict: The updated planner variables after the human clarification process.
+        """
+
+        logging.info(f"Initiating Human Clarification. Make sure to clarify the questions, if not just type `I dont know` to stop")
+        chat_history = []
+    
+        while True:
+            clarifier_vars = {
+                **planner_vars,
+                "chat_history": "\n".join(chat_history)
+            }
+            clarifier = TaskClarifier.from_template(variables=clarifier_vars)
+            
+            response = await self.llm.async_run(clarifier)
+            parsed_response = await async_get_last_json(response, llm=self.llm)
             question = parsed_response.get("question", "").strip()
             
             if not question:
@@ -205,6 +267,57 @@ class TaskPlanner(BasePlanner):
         print(f"\n\nTasks: {tasks}\n\n")
         return tasks
 
+    async def async_plan(
+        self,
+        query: str,
+        description: str,
+        long_term_context : str,
+        supported_actions: List[Dict],
+        *args,
+        **kwargs,
+    ) -> Dict:
+        """
+        Plans a task by querying a large language model (LLM) and extracting the resulting tasks.
+
+        Args:
+            query (str): The objective or query to plan for.
+            description (str): A description of the task or problem to solve.
+            supported_actions (List[Dict]): A list of dictionaries describing the actions that can be taken to solve the task.
+            *args: Additional arguments to pass to the LLM.
+            **kwargs: Additional keyword arguments to pass to the LLM.
+
+        Returns:
+            Dict: A dictionary containing the planned tasks.
+            :param supported_actions:
+            :param query:
+            :param description:
+            :param long_term_context:
+        """
+        planner_vars = dict(
+            objective=query,
+            task_descriptions=description,
+            supported_actions=supported_actions,
+            previous_context=long_term_context,
+            *args,
+            **kwargs,
+        )
+
+        if self.human_intervene:
+            planner_vars = await self.async_human_clarification(planner_vars)
+
+        prompt_template = self.get_prompt()
+
+        prompt: str = prompt_template.from_template(variables=planner_vars)
+        resp = await self.llm.async_run(prompt)
+
+        tasks = await self._async_extract_task_with_retry(resp, prompt)
+
+        if not tasks:
+            raise LLMResponseError("Note: This not a error => No tasks was planned in the Planner response. Tweak the prompt and actions, then try again")
+
+        print(f"\n\nTasks: {tasks}\n\n")
+        return tasks
+
     def _extract_task_with_retry(self, llm_response: str, prompt: str) -> Dict:
         """
         Attempts to extract a task from the given LLM response, retrying up to a specified threshold if the response is not valid JSON.
@@ -231,5 +344,34 @@ class TaskPlanner(BasePlanner):
                     f"Retrying task extraction {retries}/{self.retry_threshold} due to an error parsing the JSON response."
                 )
                 llm_response = self.llm.run(prompt)
+
+        raise LLMResponseError("Failed to extract tasks after multiple retries.")
+    
+    async def _async_extract_task_with_retry(self, llm_response: str, prompt: str) -> Dict:
+        """
+        Attempts to extract a task from the given LLM response, retrying up to a specified threshold if the response is not valid JSON.
+
+        Args:
+            llm_response (str): The response from the language model.
+            prompt (str): The prompt used to generate the LLM response.
+
+        Returns:
+            Dict: The extracted task, or raises an exception if the task could not be extracted after multiple retries.
+
+        Raises:
+            LLMResponseError: If the task could not be extracted after multiple retries.
+        """
+        retries = 0
+        while retries < self.retry_threshold:
+            try:
+                resp = self._extract_task_from_response(llm_response=llm_response)
+                logging.debug(f"\n\nExtracted Task: {resp}\n\n")
+                return resp
+            except json.JSONDecodeError:
+                retries += 1
+                logging.info(
+                    f"Retrying task extraction {retries}/{self.retry_threshold} due to an error parsing the JSON response."
+                )
+                llm_response = await self.llm.async_run(prompt)
 
         raise LLMResponseError("Failed to extract tasks after multiple retries.")

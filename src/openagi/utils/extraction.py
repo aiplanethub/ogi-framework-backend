@@ -47,6 +47,44 @@ def force_json_output(resp_txt: str, llm):
     prompt = prompt.replace("{resp_txt}", resp_txt)
     return llm.run(prompt)
 
+async def async_force_json_output(resp_txt: str, llm):
+    """
+    Forces the output once the max iterations are reached.
+    """
+    #prompt = dedent(
+    #    """
+    #    Below is a JSON block. Please try to provide the output in the format shown below only
+    #    ```json
+    #        {"key": "value"}
+    #    ```
+    #    the contents between ```json and ``` will be extracted and passed to json.loads() in python to convert it to a dictionary. Make sure that it works when passed else you will be fined. If its already in the correct format, then you can return the same output in the expected output format.
+    #    Input:
+    #    {resp_txt}
+    #    Output:
+    #    """
+    #).strip()
+
+    prompt = dedent(
+        """
+        Your task is to process the input JSON and provide a valid JSON output. Follow these instructions carefully:
+        1. The output must be enclosed in a code block using triple backticks and the 'json' language identifier, like this:
+        ```json
+         {"key": "value"}
+        ```
+        2. The JSON inside the code block must be valid and parseable by Python's json.loads() function.
+        3. Ensure there are no extra spaces, newlines, or characters outside the JSON object within the code block.
+        4. If the input is already in the correct format, reproduce it exactly in the output format specified above.
+        5. Do not include any explanations, comments, or additional text in your response. The output needs be in JSON only. 
+        6. Verify your output carefully before submitting. Incorrect responses will result in penalties.
+        
+        Input: {resp_txt}
+        Output:
+        """
+    ).strip()
+
+    prompt = prompt.replace("{resp_txt}", resp_txt)
+    return await llm.async_run(prompt)
+
 
 def get_last_json(
     text: str, llm: Optional[LLMBaseModel] = None, max_iterations: int = 5
@@ -77,6 +115,50 @@ def get_last_json(
             logging.info(f"Iteration {iteration} to extract JSON from LLM output.")
             try:
                 text = force_json_output(text, llm)
+                matches = re.findall(pattern, text, flags=re.DOTALL)
+                if matches:
+                    last_json = matches[-1].strip().replace("\n", "")
+                    json_resp = json.loads(last_json)
+                    logging.info("JSON extracted successfully.")
+                    return json_resp
+            except json.JSONDecodeError:
+                logging.error("JSON not extracted. Trying again.", exc_info=True)
+                continue
+            if iteration == max_iterations:
+                raise OpenAGIException(
+                    "The last output is not a valid JSON. Please check the output of the last action."
+                )
+    return None
+
+async def async_get_last_json(
+    text: str, llm: Optional[LLMBaseModel] = None, max_iterations: int = 5
+) -> Optional[Dict]:
+    """
+    Extracts the last block of text between ```json and ``` markers from a given string.
+
+    Args:
+        text (str): The string from which to extract the JSON block.
+        llm (Optional[LLMBaseModel]): The language model instance to use for reformatting.
+        max_iterations (int): Maximum number of iterations to try reformatting.
+
+    Returns:
+        dict or None: The last JSON block as a dictionary if found and parsed, otherwise None.
+    """
+    pattern = r"```json(.*?)```"
+    matches = re.findall(pattern, text, flags=re.DOTALL)
+    if matches:
+        last_json = matches[-1].strip().replace("\n", "")
+        try:
+            return json.loads(last_json)
+        except json.JSONDecodeError:
+            logging.error("JSON not extracted. Trying again.", exc_info=True)
+            pass
+
+    if llm:
+        for iteration in range(1, max_iterations + 1):
+            logging.info(f"Iteration {iteration} to extract JSON from LLM output.")
+            try:
+                text = await async_force_json_output(text, llm)
                 matches = re.findall(pattern, text, flags=re.DOTALL)
                 if matches:
                     last_json = matches[-1].strip().replace("\n", "")
