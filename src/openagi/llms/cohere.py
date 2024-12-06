@@ -32,6 +32,9 @@ class CohereModel(LLMBaseModel):
         )
         return self.llm
 
+    async def async_load(self):
+        return self.load()
+
     def run(self, input_data: str):
         """Runs the Cohere model with the provided input text.
 

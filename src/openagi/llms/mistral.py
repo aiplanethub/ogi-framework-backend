@@ -36,6 +36,9 @@ class MistralModel(LLMBaseModel):
         )
         return self.llm
 
+    async def async_load(self):
+        return self.load()
+
     def run(self, input_text: str):
         """Runs the Mistral model with the provided input text.
 
