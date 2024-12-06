@@ -8,6 +8,7 @@ from openagi.actions.tools import (
     webloader,
     youtubesearch,
     exasearch,
+    tavilyqasearch
 )
 from openagi.actions import files, formatter, human_input, compressor, console, obs_rag
 
@@ -26,7 +27,8 @@ modules = [
     human_input,
     compressor,
     console,
-    obs_rag
+    obs_rag,
+    tavilyqasearch
 ]
 
 
