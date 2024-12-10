@@ -31,11 +31,7 @@ class OpenAIModel(LLMBaseModel):
     
     async def async_load(self):
         """Initializes the OpenAI instance asynchronously."""
-        self.llm = ChatOpenAI(
-            openai_api_key=self.config.openai_api_key,
-            model_name=self.config.model_name,
-        )
-        return self.llm
+        return self.load()
 
     def run(self, input_text: str):
         """Runs the OpenAI model with the provided input text.

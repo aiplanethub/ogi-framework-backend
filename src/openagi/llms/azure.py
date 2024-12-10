@@ -1,6 +1,6 @@
 from typing import Any
 from langchain_core.messages import HumanMessage
-from langchain_openai import AzureChatOpenAI  # Assuming this import is correct
+from langchain_openai import AzureChatOpenAI  # Assuming this import is correct, 
 
 from openagi.llms.base import LLMBaseModel, LLMConfigModel
 from openagi.utils.yamlParse import read_from_env
@@ -34,6 +34,9 @@ class AzureChatOpenAIModel(LLMBaseModel):
             azure_endpoint=self.config.base_url,
         )
         return self.llm
+
+    async def async_load(self):
+        return self.load()
 
     def run(self, input_data: str):
         """Runs the Azure Chat OpenAI model with the provided input text.
