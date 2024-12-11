@@ -35,7 +35,7 @@ class Worker(BaseModel):
         default_factory=list,
     )
     max_iterations: int = Field(
-        default=20,
+        default=10,
         description="Maximum number of steps to achieve the objective.",
     )
     output_key: str = Field(
